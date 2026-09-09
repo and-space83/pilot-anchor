@@ -205,6 +205,9 @@
   .likert button.sel { background: var(--go); color: var(--go-ink); border-color: var(--go); }
   .likert button.sel b { color: var(--go-ink); }
   .qitem[hidden] { display: none; }
+  .rating-answer { text-align: center; font-size: calc(16px * var(--ui-scale)); color: var(--ink-2); margin-bottom: 14px; line-height: 1.5; }
+  .rating-answer b { color: var(--go); font-size: calc(18px * var(--ui-scale)); }
+  .rating-answer[hidden] { display: none; }
   .anchors { display: flex; justify-content: space-between; margin-top: 6px;
     font-size: calc(14px * var(--ui-scale)); color: var(--ink-2); }  /* 2026-07-15 高齢者配慮: 端点の意味が読める大きさ・明度に */
   .anchors span { max-width: 44%; }

@@ -47,10 +47,13 @@
              resumes: [{at, afterTrial, gapMs}],   // 中断→再開の記録 (2026-09-06 §6-6 項17。再読込/タブ破棄の後に同じ URL で続きから再開。空=再開なし)
              tutorialLog: [{kind('drag'|'rating'), step|page, ms} | {kind, event('replay'|'again'|'back')}],
              uiScale,                          // 説明・評定・アンケート画面の文字倍率 (2026-09-08 §6-6 項18。短辺≥700px で 1.6、?fs= で上書き。課題画面は対象外)
-             ratingTutorial: {changed, completed, pages}},   // 評定チュートリアル (2026-09-08 から 2 ページ = 迷い画面・自信画面)
+             ratingTutorial: {changed, completed, pages},   // 評定チュートリアル (2026-09-08 から 2 ページ = 迷い画面・自信画面)
+             startMode('dynamic'),             // 開始手続き (2026-09-09。'dynamic' = 場面文先出し・枠から出たら選択肢。旧データは無し = 静的)
+             instructed: {n, itemIds, text}},  // 教示誘導ブロックの構成 (クラウド配布のみ。kiosk/stop では null)
                                                // チュートリアルの各説明ページの滞在時間と「もう一度」「↻ 説明」の回数 (2026-09-07。対面での教示の評価用)
     trials: [ {
-      index, phase('main'|'practice'), stimulusType('numeric-size'|'text-choice'),
+      index, phase('main'|'practice'|'instructed'), stimulusType('numeric-size'|'text-choice'),
+      isInstructed(true=末尾の教示誘導ブロック 8 問。careless GT 候補 A。評定なし。迷い予測の解析から除外。2026-09-09 §6-6 項19),
       // --- ① anchor (numeric-size) のメタ ---
       pair[s,l], pairLabel, numDistance,
       congruent, congruency, leftVal, rightVal, leftBig, rightBig, largerSide, correctSide,
@@ -67,7 +70,12 @@
       post_resume(true=中断→再開の直後の本試行。§6-6 項17。間隔が空いた分を感度分析で除外可能に),
       // --- 共通 ---
       choiceSide, correct,   // correct: anchor=正誤 / value=規範(高価値/高EV)整合 / moral=規範(明確のみ)。規範なしは null
-      stimulusOnsetT, initiationT, responseT, rt_proxy_ms, mt_proxy_ms, total_ms,
+      // --- 動的スタート (2026-09-09 §6-6 項19): 場面文は最初から表示 → START に指を置く → 枠から出た瞬間に選択肢が出る ---
+      stimulusOnsetT(場面文の表示時刻), startPressT(START 押下), preStartMs(表示〜押下 = 読解+熟考),
+      revealT(選択肢の出現 = 枠から出た時刻), revealXY(出現時の指位置。surface 相対 CSS px),
+      stopsAfterReveal:{n, ms, maxMs}(出現後の停止 = 6px 以内に 500ms 以上とどまった区間), stopFlag(maxMs>=1000),
+      stopNotice(true=この試行の START 上に前問の停止の案内が出ていた),
+      initiationT(=枠から出た時刻), responseT, rt_proxy_ms(押下〜枠から出るまで = 押さえていた時間), mt_proxy_ms(出現〜離す), total_ms(押下〜離す),
       dispHz, nDispatched, nCoalesced, aborts,
       ratings: {confidence:{value,rt_ms}, hesitation:{...}} (2026-07-15 2項目化。第二パイロット以前のデータは difficulty あり。
                 2026-09-08 から言葉付き 5 択・1 項目 1 画面 = 迷い → 自信。rt_ms はその項目の画面が出てから押すまで), ratingSubmitMs, ratingBacks (自信の画面から「戻る」を押した回数),
@@ -230,6 +238,7 @@
 <section id="rating" class="screen">
   <div class="qwrap">
     <div id="ratingHead"></div>
+    <div id="ratingAnswer" class="rating-answer" hidden></div>   <!-- あなたの回答: <選んだ行為> (2026-09-09) -->
     <div id="ratingItems"></div>
     <!-- 1 項目 1 画面 (2026-09-08 §6-6 項18): 迷いの画面 = 「次へ」/ 自信の画面 = 「戻る」+「決定して次へ」。
          進む操作の場所は 1 箇所 (2026-07-22 の方針)。チュートリアル中の「↻ もう一度」は自信の画面だけ -->
@@ -286,7 +295,7 @@
 <section id="reading" class="screen">
   <div class="pad">
     <h1>文章を読む速さの確認</h1>
-    <p id="readIntro">まず、文章を読む速さを確認します（短い文章を3本）。<br>表示された文章を<b>ふだんどおりの速さ</b>で読み、読み終えたら<b>すぐ</b>下のボタンを押してください。<br>内容についての質問はありません。覚える必要もありません。</p>
+    <p id="readIntro">まず、文章を読む速さを確認します（短い文章を4本）。<br>表示された文章を<b>ふだんどおりの速さ</b>で読み、読み終えたら<b>すぐ</b>下のボタンを押してください。<br><b>読むだけで、選びません。</b>内容についての質問はありません。覚える必要もありません。</p>
     <p class="opt-note" id="readCounter"></p>
     <div class="rtext" id="readText" style="display:none"></div>
     <div class="vgap"></div>
@@ -595,7 +604,7 @@
       practiceFeedback: "neutral",  // 主観選択なので正誤フィードバックはしない
       gateStreak: 2,         // 行動ゲート: 有効ドラッグ2連続で本番解錠 (2026-07-07。主観課題なので正誤は問わない)
       gateCorrect: false,
-      coachDrag: 'そのまま|<b>指を離さずに</b>、|光っている2つのうち|<b>あなたが選ぶ方</b>まで運び、|ボックスの<b>中で</b>|<b>指を離します</b>',
+      coachDrag: 'そのまま|<b>指を離さずに</b>、|できるだけ<b>止めないで</b>|考えながら、|<b>あなたが選ぶ方</b>まで運び、|ボックスの<b>中で</b>|<b>指を離します</b>',
       introHtml:
         '<h1>価値・選好の2択課題 (パイロット)</h1>' +
         '<p>STARTボタンに指を置くと、上に2つの選択肢が出ます。<b>指を離さずに、あなたが選ぶ方のボックスへドラッグ</b>して、そこで指を離してください。</p>' +
@@ -697,7 +706,7 @@
       practiceFeedback: "neutral",  // 主観判断なので正誤フィードバックはしない
       gateStreak: 2,         // 行動ゲート: 有効ドラッグ2連続で本番解錠 (主観課題なので正誤は問わない)
       gateCorrect: false,
-      coachDrag: 'そのまま|<b>指を離さずに</b>、|光っている2つのうち|<b>あなたが選ぶ方</b>まで運び、|ボックスの<b>中で</b>|<b>指を離します</b>',
+      coachDrag: 'そのまま|<b>指を離さずに</b>、|できるだけ<b>止めないで</b>|考えながら、|<b>あなたが選ぶ方</b>まで運び、|ボックスの<b>中で</b>|<b>指を離します</b>',
       introHtml:
         '<h1>道徳的な判断の2択課題 (パイロット)</h1>' +
         '<p>STARTボタンに指を置くと、上に短い場面と2つの選択肢が出ます。<b>指を離さずに、あなたが選ぶ方のボックスへドラッグ</b>して、そこで指を離してください。</p>' +
@@ -827,6 +836,16 @@
   // 事後アンケート拡充分 (§6-6 項8、2026-09-06): 評定ブロックを含む**クラウド配布**のみ。対面 (kiosk / 中断ボタンあり) は
   // 時間枠が短く実施者も不在なので、操作の質問 (grip + UI/負担) だけに留める (ユーザー方針 2026-09-06)
   const POST_ON = HAS_RATING_BLOCK && !KIOSK && !STOP_ON;
+  // 教示誘導ブロック (careless GT 候補 A。decisions-log 2026-09-09・§6-6 項19): ⑤末尾ブロックの後・事後アンケートの前に 8 問。
+  // クラウド配布 (評定ブロックあり・kiosk/stop でない) のみ。?instr=0 で無効 (開発用)
+  const INSTR_ON = (function () { const v = QS.get("instr"); if (v != null) return v !== "0"; return HAS_RATING_BLOCK && !KIOSK && !STOP_ON; })();
+  const INSTR_N = 8;
+  const INSTR_TEXT = "ここからの 8 問は、問題文をよく読まずに、できるだけ速く、どちらか一方を選んでください。内容や正解、迷いは気にしなくて構いません。";
+  let instructedDone = false, pendingInstructedStart = false, instrIndex = 0;
+  // 動的スタートの停止 (§6-6 項19): 6px 以内に STOP_MIN_MS 以上とどまれば停止。STOP_NOTICE_MS 以上なら次の問題の START 上に案内
+  const STOP_MIN_MS = 500, STOP_NOTICE_MS = 1000, STOP_EPS_PX = 6;
+  const STOP_NOTICE_TEXT = "前の問題では指が1秒以上止まりました。できるだけ指を止めないで考えながら運んでください。";
+  let pendingStopNotice = false, stopNoticeShown = false, stemShownT = 0;
   let seqIndex = 0;
   let pendingMainStart = false;   // 練習クリア画面 (blockintro 流用) から「続ける」で本番へ (2026-07-15 自己ペース化)
   let BLOCK;   // 現在のブロック (統合では切替で再代入)
@@ -968,6 +987,8 @@
     resumes: [],              // 中断→再開の記録 {at, afterTrial, gapMs} (§6-6 項17。再読込/タブ破棄の後に同じ URL で続きから再開)
     tutorialLog: [],          // チュートリアルの各説明ページの滞在 ms とやり直し {kind:'drag'|'rating', step|page, ms} / {kind, event:'replay'|'again'|'back'} (2026-09-07)
     uiScale: UI_SCALE,        // 説明・評定・アンケート画面の文字倍率 (§6-6 項18)
+    startMode: "dynamic",     // 動的スタート (§6-6 項19。2026-09-09)
+    instructed: null,         // 教示誘導ブロック {n, itemIds, text} (careless GT 候補 A。§6-6 項19)
     exportedAt: null,
   };
   $("devline").textContent = `${device.screenW}×${device.screenH} @${device.dpr}x`;
@@ -1266,7 +1287,7 @@
   // 中立短文3本 (約30/45/60字 = 場面文の字数域をカバー) を「読み終えたらタップ」で計測して
   // 参加者ごとの読速 (字/秒) を実測し、解析での読解時間の分離 (実測値 or RT〜文字数回帰の較正) に使う。
   // moral を含むセッションで既定ON (?read=0 で無効・?read=1 で強制ON)。位置 = micgate 通過後・練習の前。
-  const READ_SENTENCES = PILOT_BANK.readingSentences;   // 中立短文3本の文言は bank.js (2026-09-06 分離)
+  const READ_SENTENCES = PILOT_BANK.readingSentences;   // ③落選場面 4 本 (2026-09-09。旧: 中立短文 3 本)。文言は bank.js
   const READING_ON = (function () {
     if (GO) return false;   // 確認モードは読速ベースラインを省略
     const v = new URLSearchParams(location.search).get("read");
@@ -1404,8 +1425,9 @@
     choiceA.style.visibility = boxVis;
     choiceB.style.visibility = boxVis;
   }
-  function coachMsg(html, pos) {   // pos: 'top' (押下前・エラー) | 'mid' (ドラッグ中・フィードバック) | 'gap' (選択肢と START の間)
+  function coachMsg(html, pos, kind) {   // pos: 'top' (押下前・エラー) | 'mid' (ドラッグ中・フィードバック) | 'gap' (選択肢と START の間)。kind='start' = START 案内 (押下で消す)
     coachEl.className = pos === "mid" ? "pos-mid" : (pos === "gap" ? "pos-gap" : "pos-top");
+    coachEl.dataset.kind = kind || "";
     coachEl.innerHTML = html;
     coachEl.style.top = "";
     if (pos === "gap") {   // 選択肢の下端と START の上端の中間 (問題文にも START にも被らない)
@@ -1413,14 +1435,15 @@
       coachEl.style.top = Math.max(0, (cb + st) / 2 - tr.top - coachEl.offsetHeight / 2) + "px";
     }
   }
-  function coachHide() { coachEl.className = ""; coachEl.innerHTML = ""; coachEl.style.top = ""; }
+  function coachHide() { coachEl.className = ""; coachEl.innerHTML = ""; coachEl.style.top = ""; coachEl.dataset.kind = ""; }
   // 練習 (チュートリアル後): 一定時間 START に触れられないときだけ「まずは下の START を…」を出す (2026-09-06)
   let idleTimer = null;
   let tutCoachTimer = null;   // チュートリアル試行の START 案内 (帯の後 0.5 秒) のタイマー
   function armIdleCoach() {
     clearIdleCoach();
     if (!(phase === "practice" && dragTutState.done)) return;
-    idleTimer = setTimeout(() => { if (!recording && !uiLocked && phase === "practice") { coachMsg(nb('まずは下の <b>START</b> を|指で<b>押さえます</b>'), "top"); } }, 4000);
+    // 動的スタートでは場面文を読んでから押すので、無操作の猶予を 8 秒に (旧 4 秒)。位置は問題文に被らない gap (2026-09-09)
+    idleTimer = setTimeout(() => { if (!recording && !uiLocked && phase === "practice") { coachMsg(nb('読み終えたら、|下の <b>START</b> を|指で<b>押さえます</b>'), "gap", "start"); } }, 8000);
   }
   function clearIdleCoach() { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } }
 
@@ -1447,8 +1470,10 @@
         // 練習終了はゲート達成 (showPracticeFeedback) が決める。キューが尽きたら補充してループ
         queue = BLOCK.buildPractice(Math.max(CONFIG.practiceTrials, BLOCK.gateStreak));
         if (UNIFIED) for (const c of queue) c._pblock = CONFIG.block;   // 補充は現在タイプで継続
+      } else if (phase === "instructed") {
+        instructedDone = true; showPostQuestions(); return;   // 教示誘導ブロック終了 → 事後アンケート
       } else {
-        advanceBlockOrFinish(); return;   // 本番終了 → 次ブロック (統合) or 事後アンケート
+        advanceBlockOrFinish(); return;   // 本番終了 → 次ブロック (統合) or 教示誘導ブロック or 事後アンケート
       }
     }
     // 時間上限 (?maxmin。対面 8 分枠)。試行の途中では切らず、次の試行に入る手前で終了する
@@ -1510,9 +1535,43 @@
       seqIndex++;
       loadBlock(SEQ[seqIndex]);   // 次ブロックへ切替 (body クラス・CONFIG.ratings/reps を差し替え)
       showBlockIntro();           // 次パートの説明 → 続けるボタンで startPractice
+    } else if (INSTR_ON && !instructedDone && records.some((r) => r.phase === "main" && !r.isCheck && r.block === "moral")) {
+      showInstructedIntro();      // 教示誘導ブロック (careless GT 候補 A。⑤の後・アンケートの前。§6-6 項19)
     } else {
       showPostQuestions();        // 全ブロック終了 → 事後アンケートは1回だけ
     }
+  }
+  // ===== 教示誘導ブロック (2026-09-09 決定。decisions-log / experiment-design §6-6 項19) =====
+  // 本番で答えた③の項目から水準 1:2:5 (≈1:2:4) で 8 問を再提示し、「読まずに速く」の教示で不注意回答を模す。評定なし。
+  function showInstructedIntro() {
+    pendingInstructedStart = true;
+    $("blockintroBody").innerHTML =
+      '<h1>最後に、短い追加の 8 問です</h1>' +
+      '<p>' + INSTR_TEXT + '</p>' +
+      '<p>操作はこれまでと同じです（START から指を出して、選ぶほうへ運びます）。<br>このあと最後のアンケートがあります。</p>';
+    show("blockintro");
+    $("blockintro").querySelector(".pad").scrollTop = 0;
+  }
+  function startInstructed() {
+    if (CONFIG.block !== "moral") loadBlock("moral");
+    const done = records.filter((r) => r.phase === "main" && !r.isCheck && r.block === "moral" && r.itemId);
+    const byLevel = { clear: [], mid: [], conflict: [] };
+    for (const r of done) if (byLevel[r.conflictLevel]) byLevel[r.conflictLevel].push(r.itemId);
+    const want = { clear: 1, mid: 2, conflict: 5 };
+    let ids = [];
+    for (const lv of Object.keys(want)) ids = ids.concat(shuffle(byLevel[lv].slice()).slice(0, want[lv]));
+    if (ids.length < INSTR_N) {   // 不足は残りから補充 (途中終了・短縮構成)
+      const rest = shuffle(done.map((r) => r.itemId).filter((id) => !ids.includes(id)));
+      ids = ids.concat(rest.slice(0, INSTR_N - ids.length));
+    }
+    const byId = {};
+    for (const item of BLOCK.bank) byId[item.id || (item.level ? `${item.mtype}-${item.level}` : item.mtype)] = item;
+    queue = shuffle(ids.filter((id) => byId[id]).map((id) => BLOCK.makeCell(byId[id], Math.random() < 0.5 ? "left" : "right")));
+    device.instructed = { n: queue.length, itemIds: queue.map((c) => c.itemId), text: INSTR_TEXT };
+    phase = "instructed"; instrIndex = 0;
+    setCoach(null); coachHide();
+    sizeCanvas();
+    nextTrial();
   }
   function showBlockIntro() {
     $("blockintroBody").innerHTML =
@@ -1539,7 +1598,10 @@
   function presentStimulus() {
     // 練習中はコーチング表示 (ステップ1: ボックスを隠し、上部の大きな説明で START へ誘導)。
     // 本番は一切出さない
-    $("taskMsg").textContent = "";
+    // 前問の停止の案内 (動的スタート。評定送信後 = ここで出す。教示誘導ブロックでは出さない)
+    stopNoticeShown = pendingStopNotice && phase !== "instructed";
+    $("taskMsg").textContent = stopNoticeShown ? STOP_NOTICE_TEXT : "";
+    pendingStopNotice = false;
     if (cell.isTutorial) {   // チュートリアル試行 = 実演から「自分で操作する」段階へ。帯で切り替えを告知し、練習の帯は次に回す
       // 帯「では、1問やってみましょう」が消えて 0.5 秒後に START 案内を出す (同時に出すと上から読んで帯を読み飛ばす。2026-09-06 実機FB)
       const myCell = cell;
@@ -1548,7 +1610,7 @@
         tutCoachTimer = setTimeout(() => {
           tutCoachTimer = null;
           if (cell !== myCell || phase !== "practice" || recording || uiLocked || trial) return;   // もう押している/進んだなら出さない
-          coachMsg(nb('まずは下の <b>START</b> を|指で<b>押さえます</b>') + '<span class="sub">' + nb('実演ではなく、|自分で操作します') + '</span>', "top");
+          coachMsg(nb('まずは下の <b>START</b> を|指で<b>押さえます</b>') + '<span class="sub">' + nb('実演ではなく、|自分で操作します') + '</span>', "gap", "start");   // 問題文は最初から出ているので上部には置かない (2026-09-09)
         }, 500);
       });
       pendingBanner = `ここから練習です（${CONFIG.practiceTrials}問）`;
@@ -1559,7 +1621,7 @@
     if (phase === "practice" && cell._pblock && cell._pblock !== CONFIG.block) loadBlock(cell._pblock);  // 統合練習: セルのタイプへ切替
     // 練習中の説明: ドラッグ導入チュートリアルを終えていれば出さない (2026-09-04 練習は説明なしで自由に。§6-2)
     if (phase === "practice" && !dragTutState.done) {
-      coachMsg(nb('まずは下の <b>START</b> を|指で<b>押さえたまま</b>にします'), "top");
+      coachMsg(nb('まずは下の <b>START</b> を|指で<b>押さえたまま</b>にします'), "gap");
       setCoach("start");
     } else if (phase === "practice" && cell.isTutorial) {
       // チュートリアル試行: 帯の間は案内を出さず、帯が消えて 0.5 秒後に START 案内 (上の showBanner のコールバック)。START 押下で消える
@@ -1570,14 +1632,16 @@
       coachHide();
       setCoach(null);
     }
-    // 刺激内容はブロック別に描画 (注意チェックは汎用描画)。START 押下まで隠す (= stimulus onset を down に定義)
+    // 刺激内容はブロック別に描画 (注意チェックは汎用描画)。動的スタート (2026-09-09): 場面文は最初から見せ、
+    // 選択肢は指が START の枠から出た瞬間に出す (pointermove 側)。stimulus onset = 場面文の表示時刻
     if (cell.isCheck) renderCheck(cell); else BLOCK.renderStimulus(cell);
     numA.style.visibility = "hidden";
     numB.style.visibility = "hidden";
-    stemEl.style.visibility = "hidden";
+    stemEl.style.visibility = stemEl.textContent ? "visible" : "hidden";
+    stemShownT = performance.now();
     startBtn.classList.remove("armed");
     startBtn.textContent = "START";
-    $("phaseLabel").textContent = cell.isTutorial ? "チュートリアル" : (phase === "practice" ? "練習" : "本番");
+    $("phaseLabel").textContent = cell.isTutorial ? "チュートリアル" : (phase === "practice" ? "練習" : (phase === "instructed" ? "追加" : "本番"));
     // 練習中のみ「↻ 説明」= 分からなくなったらチュートリアルを見直せる (本番では出さない)
     $("tutAgain").classList.toggle("hidden", !(phase === "practice" && dragTutState.done && DRAG_TUT_ON));
     $("counter").textContent = counterText();
@@ -1607,11 +1671,12 @@
     if (tutCoachTimer) { clearTimeout(tutCoachTimer); tutCoachTimer = null; }   // 押したら帯後の案内は出さない
     if (!inRect(rectOf(startBtn), e.clientX, e.clientY)) {
       // 練習中は原因別コーチング (ボックス直タップ等のありがちな誤操作)。本番は従来の短い注意のみ
-      if (phase === "practice") coachMsg(nb('まずは下の <b>START</b> を|指で押さえます') + '<span class="sub">' + nb('指をつけたまま動かして|選ぶ課題です') + '</span>', "top");
+      if (phase === "practice") coachMsg(nb('まずは下の <b>START</b> を|指で押さえます') + '<span class="sub">' + nb('指をつけたまま動かして|選ぶ課題です') + '</span>', "gap", "start");
       else $("taskMsg").textContent = "STARTから始めてください";
       return;
     }
     e.preventDefault();
+    $("taskMsg").textContent = "";   // 停止の案内・注意は押下で消す
     activePointerId = e.pointerId;
     try { surface.setPointerCapture(e.pointerId); } catch (_) {}
     recording = true;
@@ -1621,14 +1686,18 @@
     const stRect = rectOf(startBtn), aRect = rectOf(choiceA), bRect = rectOf(choiceB);
     const sc = center(stRect), ac = center(aRect), bc = center(bRect);
     trial = {
-      index: phase === "main" ? trialIndex + 1 : null,
+      index: phase === "main" ? trialIndex + 1 : (phase === "instructed" ? instrIndex + 1 : null),
+      isInstructed: phase === "instructed" ? true : undefined,
       // phase 'tutorial' = 導入の例を操作した1回 (練習にも解析にも数えない)。block: 統合セッションで value/moral を分離するため per-trial に記録
       phase: cell.isTutorial ? "tutorial" : phase, block: CONFIG.block, stimulusType: BLOCK.stimulusType,
       ...(cell.isCheck ? checkMeta(cell) : BLOCK.trialMeta(cell)),  // 通常=ブロック別メタ / 注意チェック=isCheck メタ
       post_check: cell.postCheck === true,   // 弱DQS直後の本試行 (警戒モード汚染を感度分析で除外可能に。§6-2)
       post_resume: resumePending === true,   // 中断→再開の直後の本試行 (§6-6 項17。間隔が空いた分を感度分析で除外可能に)
       choiceSide: null, correct: null,
-      stimulusOnsetT: e.timeStamp, initiationT: null, responseT: null,
+      // 動的スタート (§6-6 項19): onset = 場面文の表示、startPressT = 押下、revealT = 枠から出て選択肢が出た時刻
+      stimulusOnsetT: stemShownT, startPressT: e.timeStamp, preStartMs: +(e.timeStamp - stemShownT).toFixed(1),
+      revealT: null, revealXY: null, stopsAfterReveal: null, stopFlag: false, stopNotice: stopNoticeShown,
+      initiationT: null, responseT: null,
       rt_proxy_ms: null, mt_proxy_ms: null, total_ms: null,
       dispHz: null, nDispatched: 0, nCoalesced: 0, aborts: 0,
       ratings: { confidence: null, hesitation: null },
@@ -1643,12 +1712,12 @@
       events: [],
     };
     pushEvent(e, "down");
-    revealStimulus();
+    startBtn.classList.add("armed"); startBtn.textContent = "→";   // 押下では選択肢を出さない (枠から出た瞬間に出す)
     // 練習中はステップ2: ボックスを出現+発光させ「離さず運んで中で離す」(文言はブロック別。経路の形は指示しない)
     if (phase === "practice" && !dragTutState.done) { coachMsg(nb(BLOCK.coachDrag), "mid"); setCoach("drag"); }
     // チュートリアル後の練習: 上部の案内 (START 誘導) は問題文に被るので START を押した時点で消す。
     // 「選択肢のボックスの中で…」(選択肢と START の間) は START を出た時点で消す (pointermove 側)
-    else if (phase === "practice" && coachEl.classList.contains("pos-top")) coachHide();
+    else if (phase === "practice" && (coachEl.classList.contains("pos-top") || coachEl.dataset.kind === "start")) coachHide();
     clearCanvas();
     ctx.beginPath();
     ctx.moveTo(e.clientX - sRect.left, e.clientY - sRect.top);
@@ -1662,10 +1731,15 @@
       for (const c of e.getCoalescedEvents()) pushEvent(c, "coalesced");
     }
     pushEvent(e, "dispatched");
-    // initiation 検出 (START を出た最初の dispatched イベント) — RT proxy 用
-    if (!leftStart && !inRect(trial._stRect, e.clientX, e.clientY)) {
+    // 枠から出た最初の dispatched イベント = 選択肢の出現 (動的スタート) + initiation。境界のちらつき防止に 4px の遊び
+    const sr = trial._stRect;
+    if (!leftStart && (e.clientX < sr.left - 4 || e.clientX > sr.right + 4 || e.clientY < sr.top - 4 || e.clientY > sr.bottom + 4)) {
       leftStart = true;
       trial.initiationT = e.timeStamp;
+      trial.revealT = e.timeStamp;
+      trial.revealXY = { x: +(e.clientX - trial._sRect.left).toFixed(2), y: +(e.clientY - trial._sRect.top).toFixed(2) };
+      trial.events.push({ seq: trial.events.length, t: e.timeStamp, x: trial.revealXY.x, y: trial.revealXY.y, type: "reveal" });
+      revealStimulus();
       // 練習: 動き出したらコーチパネルをフェードし、軌跡の帯を空ける (教示は押下中に読み終えている)。
       // チュートリアル後は完全に消す (「選択肢のボックスの中で…」は START を出た時点で役目を終える)
       if (phase === "practice") { if (dragTutState.done) coachHide(); else coachEl.classList.add("dim"); }
@@ -1709,7 +1783,7 @@
         coachMsg(coachHtml || ((msg || "やり直し") + '<span class="sub">STARTからもう一度</span>'), "top");
         setCoach("start");
       }
-      stemEl.style.visibility = "hidden";  // 問題文は START 押下まで隠す (通常の呈示と同じ)
+      // 問題文は出したまま (動的スタート: 場面文は最初から見えている。再読は不要)
     } else {
       $("taskMsg").textContent = (msg || "やり直し").replace(/\|/g, "") + " — STARTからもう一度";
     }
@@ -1721,6 +1795,23 @@
     recording = false; activePointerId = null; leftStart = false; trial = null;
   }
 
+  // 出現後の停止 (動的スタート §6-6 項19): 出現以降の down/dispatched/up 点列で、基準点から STOP_EPS_PX 以内に
+  // STOP_MIN_MS 以上とどまった区間を数える。iOS は静止中 pointermove を出さないので時間の空白も同じ基準で停止になる
+  function computeStops(events, revealT) {
+    const out = { n: 0, ms: 0, maxMs: 0 };
+    if (revealT == null) return out;
+    const pts = events.filter((p) => (p.type === "dispatched" || p.type === "up" || p.type === "reveal") && p.t >= revealT);
+    if (!pts.length) return out;
+    let ax = pts[0].x, ay = pts[0].y, at = pts[0].t;
+    const close = (d) => { if (d >= STOP_MIN_MS) { out.n++; out.ms += d; out.maxMs = Math.max(out.maxMs, d); } };
+    for (let i = 1; i < pts.length; i++) {   // 基準点から STOP_EPS_PX を超えて動いた時点で、そこまでの滞在を閉じる
+      const p = pts[i];
+      if (Math.hypot(p.x - ax, p.y - ay) > STOP_EPS_PX) { close(p.t - at); ax = p.x; ay = p.y; at = p.t; }
+    }
+    close(pts[pts.length - 1].t - at);   // 離すまでの最後の滞在
+    out.ms = Math.round(out.ms); out.maxMs = Math.round(out.maxMs);
+    return out;
+  }
   function finalizeDrag(e) {
     const disp = trial.events.filter((p) => p.type === "dispatched");
     // 終点がどちらのボックスにあるか (viewport 座標で判定)
@@ -1739,13 +1830,16 @@
       return;
     }
 
-    // タイミング (proxy。正式な RT/MT は peak-velocity 5% 基準で後処理)
+    // タイミング (proxy。正式な RT/MT は peak-velocity 5% 基準で後処理)。動的スタート (2026-09-09):
+    //   rt_proxy = 押下〜枠から出る (押さえていた時間) / mt_proxy = 出現〜離す / total = 押下〜離す。読解+熟考は preStartMs
     const upT = trial.events[trial.events.length - 1].t;
     trial.responseT = upT;
     if (trial.initiationT == null) trial.initiationT = upT;
-    trial.rt_proxy_ms = +(trial.initiationT - trial.stimulusOnsetT).toFixed(2);
+    trial.rt_proxy_ms = +(trial.initiationT - trial.startPressT).toFixed(2);
     trial.mt_proxy_ms = +(upT - trial.initiationT).toFixed(2);
-    trial.total_ms = +(upT - trial.stimulusOnsetT).toFixed(2);
+    trial.total_ms = +(upT - trial.startPressT).toFixed(2);
+    trial.stopsAfterReveal = computeStops(trial.events, trial.revealT);
+    trial.stopFlag = trial.stopsAfterReveal.maxMs >= STOP_NOTICE_MS;
 
     // 実効 dispatch レート (dt>0 ガード)
     let span = 0, n = 0;
@@ -1760,9 +1854,15 @@
                                  : BLOCK.decideOutcome(cell, choiceSide); // anchor: 正誤 / value/moral: 規範整合 (拮抗は null)
 
     stampMonitors(trial);   // 環境音要約 (評定ONの試行は submitRating で評定込み窓に上書き)
+    pendingStopNotice = trial.stopFlag;   // 1 秒以上の停止 → 次の問題の START 上に案内 (評定の後。§6-6 項19)
     if (phase === "practice") {
       records.push(trial);
       showPracticeFeedback();
+    } else if (phase === "instructed") {   // 教示誘導ブロック: 評定なし・チェックポイントは更新しない (再開は末尾アンケートへ)
+      records.push(trial);
+      instrIndex++;
+      $("counter").textContent = counterText();
+      nextTrial();
     } else {
       records.push(trial);
       resumePending = false;   // 再開直後の1試行だけ post_resume (§6-6 項17)
@@ -1786,6 +1886,7 @@
   }
   function counterText() {   // チュートリアル試行は番号なし / 練習=n / 5 / 本番=n / N
     if (cell && cell.isTutorial) return "";
+    if (phase === "instructed") return `${instrIndex + 1} / ${INSTR_N}`;
     return phase === "practice" ? practiceCounter() : `${trialIndex + 1} / ${totalMain}`;
   }
   function showPracticeFeedback() {
@@ -1838,6 +1939,10 @@
       $("ratingHead").className = "";
       $("ratingHead").textContent = "回答について教えてください";
     }
+    // あなたの回答 (2026-09-09): 自信の質問 (「いま選んだ答えに」) の指示対象を画面に残す
+    const ans = trial.choiceSide === "left" ? trial.leftLabel : (trial.choiceSide === "right" ? trial.rightLabel : null);
+    $("ratingAnswer").hidden = !ans;
+    if (ans) { $("ratingAnswer").innerHTML = ""; const l = document.createElement("span"); l.textContent = "あなたの回答: "; const b = document.createElement("b"); b.textContent = ans; $("ratingAnswer").append(l, b); }
     const host = $("ratingItems");
     host.innerHTML = "";
     for (const item of ITEMS) {
@@ -2098,7 +2203,7 @@
       { focus: "choices2", act: "next", sample: true, reveal: 2, op: "読んだら「次へ」", txt: "その<b>下の2つ</b>が選択肢です。問題文を読んで、<b>選ぶほう</b>を決めます。" },
       { focus: "start",    act: "next", reveal: 2, op: "読んだら「次へ」", txt: "画面の<b>下</b>に <b>START</b> ボタンがあります。<br>この START に指を置いて操作します。<br>操作は<b>あとの画面</b>で実際にやってみます。" },
       // 5/7 (2026-09-08): 本番では START に指を置いている間だけ問題文と選択肢が出る (離すと消える) ことを先に伝える
-      { focus: "start",    act: "next", reveal: 2, op: "読んだら「次へ」", txt: "本番では、START に<b>指を置いている間だけ</b>問題文と選択肢が出ます。<br>指を<b>離すと消えます</b>。<br>選ぶほうの四角の<b>中まで運んでから</b>離します。" },
+      { focus: "start",    act: "next", reveal: 2, op: "読んだら「次へ」", txt: "問題文は<b>最初から</b>出ています。<br>START から指を出すと、<b>2つの選択肢</b>が出ます。<br>選択肢が出たら、できるだけ<b>指を止めないで</b>、考えながら運びます。" },
       // 5/6・6/6 はハンズオン: 実演を見せたあと自分で運んでもらい、成功したら進めるようにする
       { focus: "sandbox",  act: "concept", hands: "sandbox", op: "実際に START から運んでみましょう", txt: "START に指をおいて、<b>離さずに</b>運びます。<b>道すじは自由</b>です。（まっすぐでも、回り道でもかまいません）" },
       { focus: "action",   act: "real", hands: "real", labels: true, op: "実際に START から運んでみましょう", txt: "本番はこの<b>2つの選択肢</b>のどちらかへ、指を押さえたまま運んで、<b>ボックスの中で離します</b>。" },
@@ -3199,6 +3304,7 @@
     presentStimulus();
   }, { passive: true });
   $("blockintroGo").addEventListener("click", () => {
+    if (pendingInstructedStart) { pendingInstructedStart = false; startInstructed(); return; }   // 教示誘導ブロックへ
     if (pendingMainStart) { pendingMainStart = false; startMain(); return; }  // 練習クリア→本番 (自己ペース)
     UNIFIED ? startMain() : startPractice();   // 統合: 練習は冒頭に統合済み→次パートは本番へ直行 (2026-07-15)
   }, { passive: true });
@@ -3237,6 +3343,8 @@
       ratingsOn: () => CONFIG.ratings,
       ratPage: () => ratPage,          // 評定のページ (0=迷い / 1=自信。2026-09-08)
       ratTut: () => tutActive(),       // 評定チュートリアル中か (validate.js の判定用。同期値)
+      instructedOn: () => INSTR_ON,    // 教示誘導ブロックの有無 (2026-09-09)
+      stopNoticeText: () => STOP_NOTICE_TEXT,
       // 行動ゲートの検証用 (validate.js が練習で正解側を狙う/ゲート状態を確認するのに使う)
       phase: () => phase,
       streak: () => streak,
